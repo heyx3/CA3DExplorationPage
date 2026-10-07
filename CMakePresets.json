@@ -1,0 +1,90 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": { "major": 3, "minor": 22, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "web-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+            "vendor": {
+                "microsoft.com/VisualStudioSettings/CMake/1.0": {
+                    "intelliSenseMode": "linux-gcc-x86",
+                    "intelliSenseOptions": {
+                        "additionalCompilerArgs": [
+                            "-D__EMSCRIPTEN__",
+                            "-D__wasm__",
+                            "-D__wasm32__",
+                            "-D__ALTIVEC__",
+                            "-D__attribute__(...)=",
+                            "-D__builtin_clzg(...)=0",
+                            "-isystem", "$env{EMSDK}/upstream/emscripten/cache/sysroot/include/c++/v1",
+                            "-isystem", "$env{EMSDK}/upstream/emscripten/cache/sysroot/include/compat",
+                            "-isystem", "$env{EMSDK}/upstream/emscripten/cache/sysroot/include"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "name": "web",
+            "displayName": "Web (Release)",
+            "inherits": "web-base",
+            "binaryDir": "${sourceDir}/build/web",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+        },
+        {
+            "name": "web-debug",
+            "displayName": "Web (Debug)",
+            "inherits": "web-base",
+            "binaryDir": "${sourceDir}/build/web-debug",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "native",
+            "displayName": "Native (Visual Studio 2022)",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build/native",
+            "vendor": {
+                "microsoft.com/VisualStudioSettings/CMake/1.0": { "disableExternalAnalysis": true }
+            }
+        },
+        {
+            "name": "native-ninja-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "architecture": { "value": "x64", "strategy": "external" },
+            "toolset": { "value": "host=x64", "strategy": "external" },
+            "environment": { "CC": "cl", "CXX": "cl" },
+            "vendor": {
+                "microsoft.com/VisualStudioSettings/CMake/1.0": {
+                    "hostOS": [ "Windows" ],
+                    "disableExternalAnalysis": true
+                }
+            }
+        },
+        {
+            "name": "native-ninja",
+            "displayName": "Native (Ninja + MSVC, Debug)",
+            "inherits": "native-ninja-base",
+            "binaryDir": "${sourceDir}/build/native-ninja",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "native-ninja-release",
+            "displayName": "Native (Ninja + MSVC, Release)",
+            "inherits": "native-ninja-base",
+            "binaryDir": "${sourceDir}/build/native-ninja-release",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "web", "configurePreset": "web" },
+        { "name": "web-debug", "configurePreset": "web-debug" },
+        { "name": "native-debug", "configurePreset": "native", "configuration": "Debug" },
+        { "name": "native-release", "configurePreset": "native", "configuration": "Release" },
+        { "name": "native-ninja", "configurePreset": "native-ninja" },
+        { "name": "native-ninja-release", "configurePreset": "native-ninja-release" }
+    ]
+}
