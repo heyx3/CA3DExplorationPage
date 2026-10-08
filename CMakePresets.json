@@ -82,6 +82,7 @@
     "buildPresets": [
         { "name": "web", "configurePreset": "web" },
         { "name": "web-debug", "configurePreset": "web-debug" },
+        { "name": "serve", "configurePreset": "web", "targets": [ "serve" ] },
         { "name": "native-debug", "configurePreset": "native", "configuration": "Debug" },
         { "name": "native-release", "configurePreset": "native", "configuration": "Release" },
         { "name": "native-ninja", "configurePreset": "native-ninja" },

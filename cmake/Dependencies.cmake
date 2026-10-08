@@ -29,14 +29,32 @@ FetchContent_Declare(xtensor
 FetchContent_Declare(pcg
     GIT_REPOSITORY https://github.com/imneme/pcg-cpp.git
     GIT_TAG 428802d1a5634f96bcd0705fab379ff0113bcf13)
+#It seems like Dear ImGUI doesn't have Cmake support either: https://github.com/ocornut/imgui/issues/8896
+FetchContent_Declare(dearimgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.92.9)
 
 #xtl must come before xtensor, which looks for its target.
-FetchContent_MakeAvailable(glm xtl xtensor pcg)
+FetchContent_MakeAvailable(glm xtl xtensor pcg dearimgui)
 
 #A header-only target for PCG, marked SYSTEM (see below).
 add_library(pcg INTERFACE)
 add_library(pcg::pcg ALIAS pcg)
 target_include_directories(pcg SYSTEM INTERFACE ${pcg_SOURCE_DIR}/include)
+
+#Dear ImGUI:
+add_library(dearimgui STATIC
+    ${dearimgui_SOURCE_DIR}/imgui.cpp
+    ${dearimgui_SOURCE_DIR}/imgui_demo.cpp
+    ${dearimgui_SOURCE_DIR}/imgui_draw.cpp
+    ${dearimgui_SOURCE_DIR}/imgui_tables.cpp
+    ${dearimgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${dearimgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${dearimgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp)
+add_library(dearimgui::dearimgui ALIAS dearimgui)
+target_include_directories(dearimgui SYSTEM PUBLIC ${dearimgui_SOURCE_DIR})
+target_include_directories(dearimgui SYSTEM PUBLIC ${dearimgui_SOURCE_DIR}/backends)
+target_compile_definitions(dearimgui PUBLIC IMGUI_IMPL_OPENGL_ES3)
 
 
 #Mark the third-party headers as SYSTEM includes.
@@ -68,3 +86,4 @@ MarkAsSystemHeaders(glm-header-only)
 target_compile_definitions(glm-header-only INTERFACE GLM_FORCE_SWIZZLE GLM_FORCE_XYZW_ONLY)
 MarkAsSystemHeaders(xtl)
 MarkAsSystemHeaders(xtensor)
+MarkAsSystemHeaders(dearimgui)

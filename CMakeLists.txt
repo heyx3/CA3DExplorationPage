@@ -16,16 +16,27 @@ target_include_directories(core PUBLIC src)
 target_link_libraries(core PUBLIC glm::glm xtensor pcg::pcg)
 
 add_executable(app app/main.cpp)
-target_link_libraries(app PRIVATE core)
+target_link_libraries(app PRIVATE core dearimgui::dearimgui)
 
 
 if(EMSCRIPTEN)
     #Produces index.html, index.js and index.wasm in the build folder.
     set_target_properties(app PROPERTIES OUTPUT_NAME index SUFFIX ".html")
 
-    #The shell file is applied at link time,
-    #   so relink whenever it changes.
+    #Configure Dear ImGUI backends for Emscripten.
+    set(EMSCRIPTEN_WEB_FLAGS "SHELL:-s USE_SDL=2" "SHELL:-s USE_WEBGL2=1" "SHELL:-s MIN_WEBGL_VERSION=2")
+    target_compile_options(dearimgui PRIVATE ${EMSCRIPTEN_WEB_FLAGS})
+
+    #The shell file is applied at link time, so relink whenever it changes.
     set(shellFile ${CMAKE_SOURCE_DIR}/web/shell.html)
-    target_link_options(app PRIVATE --shell-file ${shellFile})
+    target_compile_options(app PRIVATE ${EMSCRIPTEN_WEB_FLAGS})
+    target_link_options(app PRIVATE --shell-file ${shellFile} ${EMSCRIPTEN_WEB_FLAGS})
     set_target_properties(app PROPERTIES LINK_DEPENDS ${shellFile})
+
+    #Build, then serve and open the page: cmake --build --preset serve
+    add_custom_target(serve
+        COMMAND emrun --port 8080 $<TARGET_FILE:app>
+        DEPENDS app
+        USES_TERMINAL
+        VERBATIM)
 endif()
