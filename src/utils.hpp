@@ -7,24 +7,53 @@
 #include <type_traits>
 #include <random>
 #include <limits>
+#include <algorithm>
+#include <numeric>
 
 #include <pcg_random.hpp>
-#include <xtensor/containers/xtensor.hpp>
-#include <xtensor/views/xview.hpp>
-#include <xtensor/core/xvectorize.hpp>
-#include <xtensor/generators/xbuilder.hpp>
 
 
 namespace CALevelGen
 {
-    //Resamples a coordinate from "source" space 0 to N-1, into "destination" space 0 to M-1.
-    //This can be used to implement Nearest sampling of a grid onto another grid size.
-    inline size_t GetNearestCoord(size_t srcSize, size_t destSize, size_t srcPixel)
+    //Precomputes an efficient transformation from a "source" pixel index range to a "destination",
+    //   matching the behavior of Nearest texture filtering.
+    //
+    //Construct it with the source and destination pixel count,
+    //   then invoke it with the source pixel index to get the destination pixel index.
+    //Operates on one axis, so keep one per-component.
+    //
+    //Precision issues occur for source sizes above 2^16; fortunately that's not likely in our use-case.
+    struct NearestCoordMapper
     {
-        //The real math is 'dest = src * (destSize / srcSize)'.
-        //However, under integer divsion we need to do the multiply first to get correct results.
-        return (srcPixel * destSize) / srcSize;
-    }
+        //Based on a neat trick: treat a uint64 as a fixed-point value,
+        //  with the top 32 bits being the integer and bottom 32 bits being the fraction.
+        //
+        //In this format, multiplication and division are still done with more-or-less standard integer division.
+        //But now division produces 32 extra bits of fractional precision!
+        //
+        //At runtime, you apply this ratio to a uint32 coordinate and truncate the fractional component.
+        //There are some technical details to the math which I'm skimming over.
+
+        uint64_t Multiplier_FixedPoint;
+        uint32_t ClampMax; //Source sizes above 2^16 cause imprecision and may step over the dest range
+
+        NearestCoordMapper(uint32_t srcSize, uint32_t destinationSize)
+        {
+            assert(srcSize > 0 && destinationSize > 0);
+
+            auto destSize_FixedPoint = uint64_t{ destinationSize } << 32;
+            //The ratio is rounded up to ensure correct results in every case.
+            Multiplier_FixedPoint = (destSize_FixedPoint + srcSize - 1) / srcSize;
+
+            ClampMax = destinationSize - 1;
+        }
+
+        uint32_t operator()(uint32_t c) const
+        {
+            auto result_FixedPoint = uint64_t{c} * Multiplier_FixedPoint;
+            return std::min(ClampMax, static_cast<uint32_t>(result_FixedPoint >> 32));
+        }
+    };
 
     //splitmix64's finalizer; a good way to hash an integer.
     inline uint64_t HashU64(uint64_t z)

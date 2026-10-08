@@ -1,7 +1,5 @@
 #include "LevelGen.hpp"
 
-#include <string>
-
 #include <glm/glm.hpp>
 #include <xtensor/containers/xtensor.hpp>
 #include <xtensor/generators/xbuilder.hpp>
@@ -70,7 +68,7 @@ State::State(const Generator& generator, int sizeX, int sizeY,
 
     //Set up the initialization of each layer.
     //TODO: More options for starting state (even per-layer)
-    auto pickPixel = [&](int layerI, int posX, int posY) -> bool
+    auto pickPixel = [&](int layerI, size_t posX, size_t posY) -> bool
     {
         auto rng = SeedRng(posX, posY, layerI, seed);
         return (Rng32Float01(rng) < startingDensity);
@@ -86,7 +84,7 @@ State::State(const Generator& generator, int sizeX, int sizeY,
     {
         //Generate the grid.
         LayerStates.push_back(std::apply(
-            xt::vectorize([&](int x, int y) { return pickPixel(layerI, x, y); }),
+            xt::vectorize([&](size_t x, size_t y) { return pickPixel(layerI, x, y); }),
             xt::meshgrid(
                 xt::arange<size_t>(layerSizeX),
                 xt::arange<size_t>(layerSizeY)
@@ -96,7 +94,7 @@ State::State(const Generator& generator, int sizeX, int sizeY,
         //Downscale for the next layer.
         if (layerI > 0)
         {
-            int downscale = generator.LayerUpscales[static_cast<size_t>(layerI - 1)];
+            int downscale = GeneratorInfo.LayerUpscales[static_cast<size_t>(layerI - 1)];
             if (downscale > 0)
             {
                 layerSizeX /= downscale;
@@ -128,6 +126,7 @@ State::State(const Generator& generator, int sizeX, int sizeY,
 
     //Set up tick buffers.
     LayerStatesBuffers = LayerStates;
+    LayerParentCoordsBuffer.reserve(GeneratorInfo.NLayers - 1);
 
     //Cache the update behavior at each layer.
     LayerUpdatesSpacingAndOffset.resize(GeneratorInfo.NLayers);
@@ -173,7 +172,7 @@ State::State(const Generator& generator, int sizeX, int sizeY,
                 if (physicalScale > 0)
                     updateScale *= physicalScale;
                 else
-                    updateScale /= -physicalScale;
+                    updateScale = std::max(1, updateScale / -physicalScale);
             }
             else
             {
@@ -192,26 +191,26 @@ void State::Update()
         if (NTicks % layerTickSpacing == layerTickOffset)
         {
             std::array targetSize{
-                LayerStates[layerI]
+                LayerStates[layerI].shape()[0],
+                LayerStates[layerI].shape()[1]
             };
 
-            //Upscale the parent states to this size.
+            //Precompute the mapping from child pixel to each parent layer's pixels.
             int nParents = layerI;
-            auto sampleParent = [&](size_t parentI, size_t childX, size_t childY)
+            LayerParentCoordsBuffer.clear();
+            for (int parentI = 0; parentI < nParents; ++parentI)
             {
-                    return LayerStates[parentI](
-                        GetNearestCoord(
-                            LayerStates[layerI].shape()[0],
-                            LayerStates[parentI].shape()[0],
-                            childX
-                        ),
-                        GetNearestCoord(
-                            LayerStates[layerI].shape()[1],
-                            LayerStates[parentI].shape()[1],
-                            childY
-                        )
-                        );
-            };
+                LayerParentCoordsBuffer.push_back({
+                    NearestCoordMapper{
+                        static_cast<uint32_t>(targetSize[0]),
+                        static_cast<uint32_t>(LayerStates[parentI].shape()[0])
+                    },
+                    NearestCoordMapper{
+                        static_cast<uint32_t>(targetSize[1]),
+                        static_cast<uint32_t>(LayerStates[parentI].shape()[1])
+                    }
+                });
+            }
 
             //Apply the rule at each cell.
             //The boundary behavior is chosen at compile-time to keep it out of the hot loop.
@@ -221,7 +220,12 @@ void State::Update()
                 {
                     auto ruleIdx = GeneratorInfo.PickRuleTreeIndex(
                         nParents,
-                        [&](size_t parentI) { return sampleParent(parentI, x, y); }
+                        [&](size_t parentI)
+                        {
+                            auto x2 = LayerParentCoordsBuffer[parentI][0](static_cast<uint32_t>(x)),
+                                 y2 = LayerParentCoordsBuffer[parentI][1](static_cast<uint32_t>(y));
+                            return LayerStates[parentI](x2, y2);
+                        }
                     );
                     const Rule& rule = GeneratorInfo.RuleTree[ruleIdx];
 
@@ -268,7 +272,7 @@ void State::Update()
             else
                 xt::noalias(LayerStatesBuffers[layerI]) = std::apply(xt::vectorize(makeNewStateGenerator(std::true_type{}, false)), cellIdcs);
 
-            //Immedately apply this state so that subsequent layers can see it.
+            //Immediately apply this state so that subsequent layers can see it.
             std::swap(LayerStates[layerI], LayerStatesBuffers[layerI]);
         }
     }

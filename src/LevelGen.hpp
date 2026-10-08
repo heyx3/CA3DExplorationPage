@@ -2,16 +2,17 @@
 
 #include <cstdint>
 #include <array>
-#include <span>
 #include <tuple>
 #include <utility>
 #include <cassert>
 #include <vector>
 #include <optional>
+#include <string>
+#include <algorithm>
 #include <random>
+#include <bitset>
 
 #include <pcg_random.hpp>
-#include <glm/glm.hpp>
 #include <xtensor/containers/xtensor.hpp>
 #include <xtensor/views/xview.hpp>
 #include <xtensor/core/xexpression.hpp>
@@ -36,7 +37,7 @@ namespace CALevelGen
     //   describing the output state in every possible scenario.
     //
     //Outer CA layers are used to select what rules the inner layers should use;
-    //   in other words each outer layer injects stucture
+    //   in other words each outer layer injects structure
     //   by adding one bit of input state to an inner layer's cell.
     //
     //Generally each subsequent layer has twice the resolution and updates twice as often,
@@ -48,7 +49,13 @@ namespace CALevelGen
 
         //One version of the Wolfram 2D CA with Moore Neighborhood 1.
         //Packed tightly into a bitfield, where bit i represents
-        //   "output state when surounding cells are in configuration i".
+        //   "output state when surrounding cells are in configuration i".
+        //
+        //The configuration bitfield is ordered row by row, e.g:
+        //  * The first bit is neighbor (-1, -1)
+        //  * The second bit is neighbor (0, -1)
+        //  * The seventh bit is neighbor (-1, +1)
+        //  * The ninth bit is neighbor (+1, +1)
         struct Rule
         {
             static constexpr size_t NBits = (2 * 2 * 2 *
@@ -113,7 +120,7 @@ namespace CALevelGen
 
             //Returns whether this generator is valid.
             bool Validate() const;
-            //Fixes this generator as necessary (if Validate() is true, nothing changes).
+            //Fix anything that causes Validate() to return false.
             void Sanitize();
 
             //Decides which rule to use for a cell within a particular layer, based on the parent states above that layer.
@@ -146,6 +153,7 @@ namespace CALevelGen
 
             std::vector<xt::xtensor<bool, 2>> LayerStates, LayerStatesBuffers;
             std::vector<std::tuple<int, int>> LayerUpdatesSpacingAndOffset;
+            std::vector<std::array<NearestCoordMapper, 2>> LayerParentCoordsBuffer;
 
             //Constructs a new instance with randomized starting state based on the given seed.
             //
