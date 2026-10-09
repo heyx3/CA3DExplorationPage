@@ -32,10 +32,38 @@ FetchContent_Declare(pcg
 #It seems like Dear ImGUI doesn't have Cmake support either: https://github.com/ocornut/imgui/issues/8896
 FetchContent_Declare(dearimgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.92.9)
+    GIT_TAG v1.92.9
+    GIT_SHALLOW ON)
 
 #xtl must come before xtensor, which looks for its target.
 FetchContent_MakeAvailable(glm xtl xtensor pcg dearimgui)
+
+#Emscripten provides SDL2 and OpenGL ES 3 (WebGL 2) itself, through compiler/linker flags.
+#   Native builds get SDL2 and desktop OpenGL (loaded with GLEW) from source instead.
+if(NOT EMSCRIPTEN)
+    #Static libraries only, with no tests or install rules.
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_UNINSTALL ON CACHE BOOL "" FORCE)
+    set(glew-cmake_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(glew-cmake_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ONLY_LIBS ON CACHE BOOL "" FORCE)
+
+    #Same SDL version as Emscripten's port.
+    FetchContent_Declare(sdl2
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-2.32.10
+        GIT_SHALLOW ON)
+    #The official GLEW repo needs a script to generate its source code before building;
+    #   this fork has it pre-generated, plus CMake support.
+    FetchContent_Declare(glew
+        GIT_REPOSITORY https://github.com/Perlmint/glew-cmake.git
+        GIT_TAG glew-cmake-2.3.1
+        GIT_SHALLOW ON)
+    FetchContent_MakeAvailable(sdl2 glew)
+endif()
 
 #A header-only target for PCG, marked SYSTEM (see below).
 add_library(pcg INTERFACE)
@@ -54,7 +82,16 @@ add_library(dearimgui STATIC
 add_library(dearimgui::dearimgui ALIAS dearimgui)
 target_include_directories(dearimgui SYSTEM PUBLIC ${dearimgui_SOURCE_DIR})
 target_include_directories(dearimgui SYSTEM PUBLIC ${dearimgui_SOURCE_DIR}/backends)
-target_compile_definitions(dearimgui PUBLIC IMGUI_IMPL_OPENGL_ES3)
+if(EMSCRIPTEN)
+    target_compile_definitions(dearimgui PUBLIC IMGUI_IMPL_OPENGL_ES3)
+    #Emscripten's SDL2 port: its headers are needed at compile time and its library at link time.
+    #   PUBLIC/INTERFACE, so anything using Dear ImGUI gets both.
+    target_compile_options(dearimgui PUBLIC "SHELL:-s USE_SDL=2")
+    target_link_options(dearimgui INTERFACE "SHELL:-s USE_SDL=2")
+else()
+    #The OpenGL backend loads desktop GL with its own built-in loader, so it doesn't need GLEW.
+    target_link_libraries(dearimgui PUBLIC SDL2::SDL2-static)
+endif()
 
 
 #Mark the third-party headers as SYSTEM includes.
@@ -87,3 +124,5 @@ target_compile_definitions(glm-header-only INTERFACE GLM_FORCE_SWIZZLE GLM_FORCE
 MarkAsSystemHeaders(xtl)
 MarkAsSystemHeaders(xtensor)
 MarkAsSystemHeaders(dearimgui)
+MarkAsSystemHeaders(SDL2-static)
+MarkAsSystemHeaders(libglew_static)

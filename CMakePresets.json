@@ -8,6 +8,16 @@
             "generator": "Ninja",
             "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
             "vendor": {
+                "CA3DExplorationPage/notes": [
+                    "JSON has no comments, so notes live in this vendor key (CMake ignores vendor data).",
+                    "The IntelliSense options below only affect Visual Studio's code analysis, never the real em++ build.",
+                    "IntelliSense can't find Emscripten's headers or macros by itself, so they're passed explicitly.",
+                    "It also can't parse some Clang-only code in those headers, so a few macros hide it:",
+                    "  -D__ALTIVEC__: libc++'s __algorithm/simd_utils.h skips its Clang vector-extension SIMD helpers",
+                    "      (used by std::find, std::mismatch, etc.) when this PowerPC macro is defined.",
+                    "  -D__attribute__(...)= and -D__builtin_clzg(...)=0: stub out other Clang-only syntax/builtins.",
+                    "If IntelliSense shows errors inside libc++ headers after changing these, that's why."
+                ],
                 "microsoft.com/VisualStudioSettings/CMake/1.0": {
                     "intelliSenseMode": "linux-gcc-x86",
                     "intelliSenseOptions": {

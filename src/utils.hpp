@@ -15,6 +15,23 @@
 
 namespace CALevelGen
 {
+    //Invokes your lambda on destruction.
+    template<typename F>
+    struct ScopeCleanup
+    {
+        F&& toDo;
+        ~ScopeCleanup() { toDo(); }
+    };
+
+    static constexpr bool IsEmscripten =
+        #ifdef __EMSCRIPTEN__
+            true
+        #else
+            false
+        #endif
+    ;
+
+
     //Precomputes an efficient transformation from a "source" pixel index range to a "destination",
     //   matching the behavior of Nearest texture filtering.
     //
@@ -54,6 +71,7 @@ namespace CALevelGen
             return std::min(ClampMax, static_cast<uint32_t>(result_FixedPoint >> 32));
         }
     };
+
 
     //splitmix64's finalizer; a good way to hash an integer.
     inline uint64_t HashU64(uint64_t z)
