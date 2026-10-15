@@ -7,8 +7,13 @@
 #include <type_traits>
 #include <random>
 #include <limits>
+#include <optional>
+#include <span>
+#include <limits>
 #include <algorithm>
 #include <numeric>
+
+#include <glm/glm.hpp>
 
 #include <pcg_random.hpp>
 
@@ -70,6 +75,84 @@ namespace CALevelGen
             auto result_FixedPoint = uint64_t{c} * Multiplier_FixedPoint;
             return std::min(ClampMax, static_cast<uint32_t>(result_FixedPoint >> 32));
         }
+    };
+
+
+    template<typename I, typename F, size_t N>
+    std::optional<std::array<F, 2>> RayBoxHits(std::span<const I, N> boxMin, std::span<const I, N> boxMax,
+                                               std::span<const F, N> rayStart, std::span<const F, N> rayInvDir,
+                                               std::array<int, 2>* outHitFaces = nullptr)
+        requires std::is_floating_point_v<F>
+    {
+        static_assert(N > 0, "Must be at least 1D");
+
+        std::array<bool, N> rayAxesAreForward;
+        std::array<std::array<F, 2>, N> boxStartStops;
+        for (size_t i = 0; i < N; ++i)
+        {
+            rayAxesAreForward[i] = (rayInvDir[i] > 0);
+            auto boxMaxValue = boxMax[i] + std::is_integral_v<I>;
+            boxStartStops[i] = (rayAxesAreForward[i] ?
+                std::array{ boxMin[i], boxMaxValue } :
+                std::array{ boxMaxValue, boxMin[i] }
+            );
+        }
+
+        F t0 = -std::numeric_limits<F>::infinity(),
+          t1 = -t0;
+        int a0 = -1,
+            a1 = -1;
+        for (int i = 0; i < static_cast<int>(N); ++i)
+        {
+            F ti_0 = (boxStartStops[i][0] - rayStart[i]) * rayInvDir[i],
+              ti_1 = (boxStartStops[i][1] - rayStart[i]) * rayInvDir[i];
+            if (ti_0 > t0)
+            {
+                a0 = i;
+                t0 = ti_0;
+            }
+            if (ti_1 < t1)
+            {
+                a1 = i;
+                t1 = ti_1;
+            }
+        }
+
+        if (std::min(a0, a1) < 0 || t0 > t1)
+            return std::nullopt;
+            
+        if (outHitFaces)
+            *outHitFaces = { a0, a1 };
+        return std::array{ t0, t1 };
+    }
+
+    //Computes and represents a 3D vector basis.
+    template<typename F>
+        requires std::is_floating_point_v<F>
+    struct Basis3D
+    {
+        using V3 = glm::vec<3, F>;
+        V3 Forward, Up, Right;
+
+        Basis3D() : Forward(1, 0, 0), Up(0, 0, 1), Right(0, 1, 0) {}
+        Basis3D(const V3& forward, const V3& right, const V3& up) : Forward(forward), Right(right), Up(up) { }
+        Basis3D(const V3& forward, const V3& roughUpward)
+            : Forward(forward)
+        {
+            Right = glm::normalize(glm::cross(Forward, roughUpward));
+            Up = glm::normalize(glm::cross(Right, Forward));
+        }
+        
+        //Gets a pre-multiplied matrix, mapping world-space coordinates to this basis.
+        auto GetMatrix3() const { return glm::mat<3, 3, F>(GetMatrix4()); }
+        //Gets a pre-multiplied matrix, mapping world-space coordinates to this basis.
+        auto GetMatrix4() const {
+            return glm::transpose(glm::mat<4, 4, F>( // (we want them to be rows, but each row we pass in here becomes a column)
+                glm::vec<4, F>(Forward, 0),
+                glm::vec<4, F>(Right, 0),
+                glm::vec<4, F>(Up, 0),
+                glm::vec<4, F>(0, 0, 0, 1)
+        )); }
     };
 
 

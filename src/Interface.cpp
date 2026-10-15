@@ -4,6 +4,7 @@ using namespace CALevelGen;
 using namespace CALevelGen::Interface;
 
 #include "utils.hpp"
+#include "Renderer.hpp"
 
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
