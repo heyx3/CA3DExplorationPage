@@ -53,7 +53,7 @@ namespace CALevelGen
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                          initialPixels.empty() ? nullptr : initialPixels.data());
         }
-        ~TextureRGBA8()
+        virtual ~TextureRGBA8()
         {
             //glDeleteTextures() ignores 0, which is what a moved-from instance holds.
             glDeleteTextures(1, &handle);

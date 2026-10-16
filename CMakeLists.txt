@@ -11,7 +11,7 @@ include(Dependencies)
 
 
 #Core logic: plain C++ with no Emscripten dependencies, so it also builds natively.
-add_library(core src/LevelGen.cpp)
+add_library(core "src/CA_LayeredMoore.cpp")
 target_include_directories(core PUBLIC src)
 target_link_libraries(core PUBLIC glm::glm xtensor pcg::pcg)
 

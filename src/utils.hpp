@@ -6,7 +6,6 @@
 #include <cassert>
 #include <type_traits>
 #include <random>
-#include <limits>
 #include <optional>
 #include <span>
 #include <limits>
@@ -14,6 +13,10 @@
 #include <numeric>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/type_precision.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/geometric.hpp>
 
 #include <pcg_random.hpp>
 
@@ -78,9 +81,11 @@ namespace CALevelGen
     };
 
 
-    template<typename I, typename F, size_t N>
-    std::optional<std::array<F, 2>> RayBoxHits(std::span<const I, N> boxMin, std::span<const I, N> boxMax,
-                                               std::span<const F, N> rayStart, std::span<const F, N> rayInvDir,
+    template<typename I, typename F, glm::length_t N, glm::qualifier Q>
+    std::optional<std::array<F, 2>> RayBoxHits(const glm::vec<N, I, Q>& boxMin,
+                                               const glm::vec<N, I, Q>& boxMax,
+                                               const glm::vec<N, F, Q>& rayStart,
+                                               const glm::vec<N, F, Q>& rayInvDir,
                                                std::array<int, 2>* outHitFaces = nullptr)
         requires std::is_floating_point_v<F>
     {
@@ -88,13 +93,13 @@ namespace CALevelGen
 
         std::array<bool, N> rayAxesAreForward;
         std::array<std::array<F, 2>, N> boxStartStops;
-        for (size_t i = 0; i < N; ++i)
+        for (glm::length_t i = 0; i < N; ++i)
         {
             rayAxesAreForward[i] = (rayInvDir[i] > 0);
             auto boxMaxValue = boxMax[i] + std::is_integral_v<I>;
             boxStartStops[i] = (rayAxesAreForward[i] ?
-                std::array{ boxMin[i], boxMaxValue } :
-                std::array{ boxMaxValue, boxMin[i] }
+                std::array{ static_cast<F>(boxMin[i]), static_cast<F>(boxMaxValue) } :
+                std::array{ static_cast<F>(boxMaxValue), static_cast<F>(boxMin[i]) }
             );
         }
 
@@ -148,12 +153,105 @@ namespace CALevelGen
         //Gets a pre-multiplied matrix, mapping world-space coordinates to this basis.
         auto GetMatrix4() const {
             return glm::transpose(glm::mat<4, 4, F>( // (we want them to be rows, but each row we pass in here becomes a column)
-                glm::vec<4, F>(Forward, 0),
                 glm::vec<4, F>(Right, 0),
                 glm::vec<4, F>(Up, 0),
+                glm::vec<4, F>(Forward, 0),
                 glm::vec<4, F>(0, 0, 0, 1)
         )); }
     };
+
+    //Pixel-perfect raymarcher through a grid which starts at the origin and whose cells are size-1.
+    //
+    //'visitor' should have the signature (ivec3 cell, vec3 cellEntryPos, float cellEntryT, std::optional<int> cellEntryAxis) -> bool,
+    //  returning whether to continue the iteration.
+    //Note that if the march starts inside the grid, 'cellEntryAxis' is null for the first call.
+    //
+    //'skyVisitor' should have the signature (bool missedGridEntirely) -> void,
+    //  acknowledging that the ray missed or passed through the grid.
+    template<typename VisitVoxel, typename VisitSky>
+    void RunDDA(const glm::vec3& rayStart, const glm::vec3& rayDir,
+                const glm::ivec3& gridResolution,
+                VisitVoxel&& visitor, VisitSky&& skyVisitor)
+    {
+        glm::vec3 rayInvDir = 1.0f / rayDir;
+
+        //Check intersection with voxel grid.
+        std::array<int, 2> gridFaceHits;
+        auto gridHit = RayBoxHits(
+            glm::vec3(0), glm::vec3(gridResolution),
+            rayStart, rayInvDir,
+            &gridFaceHits
+        );
+        if (!gridHit.has_value() || (*gridHit)[1] < 0)
+        {
+            skyVisitor(true);
+            return;
+        }
+
+        //Figure our our path through the grid cells.
+        glm::ivec3 cellMoveDir = glm::sign(rayDir),
+                   cellMoveBools = glm::max(cellMoveDir, 0);
+        int lastMoveAxis;
+        float currentT;
+        glm::vec3 currentPos;
+        glm::ivec3 currentCell;
+        std::optional<int> cellEntryAxis;
+        if ((*gridHit)[0] < 0) //Already inside?
+        {
+            currentT = 0;
+            lastMoveAxis = 0; //Arbitrary
+            currentPos = rayStart;
+            currentCell = static_cast<glm::ivec3>(rayStart);
+        }
+        else
+        {
+            currentT = (*gridHit)[0];
+            lastMoveAxis = gridFaceHits[0];
+            cellEntryAxis = lastMoveAxis;
+            currentPos = rayStart + (currentT * rayDir);
+
+            //Coords along the face-hit axis are snapped; coords along the other two are calculated.
+            currentCell = static_cast<glm::ivec3>(currentPos);
+            int snapAxis = gridFaceHits[0];
+            currentCell[snapAxis] = (cellMoveDir[snapAxis] > 0 ? 0 : gridResolution[snapAxis] - 1);
+            currentCell = glm::clamp(currentCell, glm::ivec3(0, 0, 0), gridResolution - 1);
+        }
+
+        //March using DDA.
+        //NOTE a few optimizations we could make but which introduce floating-point error:
+        //  * Stopping based on currentT < (*gridHit)[1], rather than checking grid bounds
+        //  * Incrementing cellTransitionTimes[lastMoveAxis] by cellCrossingTime[lastMoveAxis] rather than recomputing from scratch
+        glm::vec3 cellTransitionTimes = (glm::vec3(currentCell + cellMoveBools) - rayStart) * rayInvDir;
+        cellTransitionTimes = glm::mix(cellTransitionTimes,
+                                       glm::vec3(std::numeric_limits<float>().infinity()),
+                                       glm::equal(cellMoveDir, glm::ivec3(0)));
+        while (currentCell[lastMoveAxis] >= 0 && currentCell[lastMoveAxis] < gridResolution[lastMoveAxis])
+        {
+            if (!visitor(currentCell, currentPos, currentT, cellEntryAxis))
+                return;
+
+            //Decide which way to move.
+            lastMoveAxis = 0;
+            if (cellTransitionTimes.y < cellTransitionTimes.x)
+                lastMoveAxis = 1;
+            if (cellTransitionTimes[lastMoveAxis] < cellTransitionTimes.z)
+                lastMoveAxis = 2;
+
+            //Move.
+            currentCell[lastMoveAxis] += cellMoveDir[lastMoveAxis];
+            currentT = cellTransitionTimes[lastMoveAxis];
+            currentPos = rayStart + (rayDir * currentT);
+            cellEntryAxis = lastMoveAxis;
+
+            cellTransitionTimes[lastMoveAxis] = rayInvDir[lastMoveAxis] * (
+                static_cast<float>(currentCell[lastMoveAxis])
+                + cellMoveBools[lastMoveAxis]
+                - rayStart[lastMoveAxis]
+            );
+        }
+
+        skyVisitor(false);
+    }
 
 
     //splitmix64's finalizer; a good way to hash an integer.

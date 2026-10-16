@@ -1,4 +1,4 @@
-#include "LevelGen.hpp"
+#include "CA_LayeredMoore.hpp"
 
 #include <glm/glm.hpp>
 #include <xtensor/containers/xtensor.hpp>
@@ -7,7 +7,7 @@
 
 
 using namespace CALevelGen;
-using namespace CALevelGen::LayeredWolfram2D;
+using namespace CALevelGen::LayeredMoore;
 
 
 bool Generator::Validate() const
@@ -120,9 +120,15 @@ State::State(const Generator& generator, int sizeX, int sizeY,
                 layerSizeX = std::max(layerSizeX, 1);
                 layerSizeY = std::max(layerSizeY, 1);
             }
+
+            LayerParentCoordsBuffer.push_back({
+                NearestCoordMapper{ sizeX, layerSizeX },
+                NearestCoordMapper{ sizeY, layerSizeY }
+            });
         }
     }
     std::reverse(LayerStates.begin(), LayerStates.end());
+    std::reverse(LayerParentCoordsBuffer.begin(), LayerParentCoordsBuffer.end());
 
     //Set up tick buffers.
     LayerStatesBuffers = LayerStates;
@@ -211,6 +217,8 @@ void State::Update()
                     }
                 });
             }
+            //Note that after the last layer is computed, LayerParentCoordsBuffer contains
+            //   the mapping promised in its doc-comment.
 
             //Apply the rule at each cell.
             //The boundary behavior is chosen at compile-time to keep it out of the hot loop.
@@ -227,7 +235,7 @@ void State::Update()
                             return LayerStates[parentI](x2, y2);
                         }
                     );
-                    const Rule& rule = GeneratorInfo.RuleTree[ruleIdx];
+                    const SingleRule& rule = GeneratorInfo.RuleTree[ruleIdx];
 
                     const auto& grid = LayerStates[layerI];
                     int sizeX = static_cast<int>(targetSize[0]),

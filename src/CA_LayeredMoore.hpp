@@ -27,27 +27,33 @@
 
 namespace CALevelGen
 {
-    //This generator is multiple layers of what is officially called
-    //   "a two-state 2D Wolfram CA, with a radius-1 Moore neighborhood".
+    //This generator is multiple layers of what is officially called "a two-state, radius-1 Moore CA".
+    //In other words, each layer is a simple two-state Cellular Automata defined as a lookup table,
+    //   mapping current-state to new-state.
     //
-    //More simply, this is a CA in which each cell has two possible values (encodable as a single bit),
-    //   and to compute the next state each cell takes itself with its eight surrounding neighbors
-    //   to build a 9-bit number.
-    //This number indexes a lookup table of 2^9 bits (512), representable as a 128-digit hex number,
-    //   describing the output state in every possible scenario.
+    //The current-state is a 9-bit number (the cell itself plus its 8 neighbors, with each cell using 1 bit),
+    //   so the lookup table is a 2^9-bit number (512 bits -- mapping each of the 2^9 possible state numbers to an output bit).
+    //In hex the table is 128 digits long!
     //
-    //Outer CA layers are used to select what rules the inner layers should use;
-    //   in other words each outer layer injects structure
-    //   by adding one bit of input state to an inner layer's cell.
+    //The outermost CA layer is very low-resolution, in both space and time, and runs completely independently.
+    //The next layer is usually higher-res, and switches between two rules based on the state of the corresponding parent cell
+    //   (conceptually, the parent adds 1 new bit to the input state).
+    //The third layer is even higher-res, and switches between *four* rules
+    //   based on the state of its parent and grandparent cell (conceptually, 2 bits of extra input state).
+    //Repeat until reaching the full-resolution innermost layer,
+    //   which has N parents and 2^N rulesets to pick from based on all parents' states.
     //
-    //Generally each subsequent layer has twice the resolution and updates twice as often,
-    //   until the final layer which runs at full resolution and updates every tick.
-    namespace LayeredWolfram2D
+    //This construction allows novel structure to be injected at multiple levels,
+    //   potentially producing amazing results.
+    //However it also has an unfathomably-large search space!
+    //I ran multiple searches to quantify different kinds of 512-bit rulesets, defining a taxonomy for them.
+    //But I encourage you to run your own search -- expect totally different kinds of results!
+    namespace LayeredMoore
     {
         //A grid state is represented as a 2D tensor of bool.
         //It could be an allocation, view, or expression, so they are generally taken as templated types.
 
-        //One version of the Wolfram 2D CA with Moore Neighborhood 1.
+        //One 512-bit ruleset definition.
         //Packed tightly into a bitfield, where bit i represents
         //   "output state when surrounding cells are in configuration i".
         //
@@ -56,7 +62,7 @@ namespace CALevelGen
         //  * The second bit is neighbor (0, -1)
         //  * The seventh bit is neighbor (-1, +1)
         //  * The ninth bit is neighbor (+1, +1)
-        struct Rule
+        struct SingleRule
         {
             static constexpr size_t NBits = (2 * 2 * 2 *
                                              2 * 2 * 2 *
@@ -86,6 +92,7 @@ namespace CALevelGen
             }
         };
         
+        //The entire definition of the layered CA.
         struct Generator
         {
             static int ExpectedRuleTreeSize(int nLayers) { return (1 << nLayers) - 1; }
@@ -95,7 +102,7 @@ namespace CALevelGen
             //The rules are stored from topmost layer on down:
             //  [largest, second-largest-1, second-largest-2, ...]
             //The count is (2^NLayers)-1.
-            std::vector<Rule> RuleTree = { { 0x55aabbcc00110011 }, { 0xfafafafa00110011 }, { 0x1231231231239999 } };
+            std::vector<SingleRule> RuleTree = { { 0x55aabbcc00110011 }, { 0xfafafafa00110011 }, { 0x1231231231239999 } };
             //The scaling factor from each layer to the next.
             //The count is (NLayers-1).
             //
@@ -123,19 +130,28 @@ namespace CALevelGen
             //Fix anything that causes Validate() to return false.
             void Sanitize();
 
+            //Compresses a line of parent cell states into an index.
+            template<typename I, typename TGetParent>
+            static auto PackParentStates(I nParents, TGetParent&& getParent)
+            {
+                using U = uint_fast16_t;
+                assert(nParents <= 16);
+
+                U u = 0;
+                for (U parentI = 0; parentI < static_cast<U>(nParents); ++parentI)
+                    u += (U{1} << parentI) * U{getParent(parentI)};
+
+                return u;
+            }
             //Decides which rule to use for a cell within a particular layer, based on the parent states above that layer.
             template<typename I, typename TGetParent>
             static auto PickRuleTreeIndex(I nParents, TGetParent&& getParent)
             {
-                using U = uint_fast16_t;
+                auto offset = PackParentStates(nParents, getParent);
+                using U = decltype(offset);
 
                 auto layerI = static_cast<U>(nParents),
                      firstDataI = static_cast<U>((U{1} << layerI) - U{1});
-
-                U offset = 0;
-                for (U parentI = 0; parentI < static_cast<U>(nParents); ++parentI)
-                    offset += (U{1} << parentI) * U{ getParent(parentI) };
-
                 return firstDataI + offset;
             }
         };
@@ -153,6 +169,9 @@ namespace CALevelGen
 
             std::vector<xt::xtensor<bool, 2>> LayerStates, LayerStatesBuffers;
             std::vector<std::tuple<int, int>> LayerUpdatesSpacingAndOffset;
+
+            //Helpfully maps coordinates of the innermost layer state to coordinates of the various parents.
+            //Contains NLayers-1 elements.
             std::vector<std::array<NearestCoordMapper, 2>> LayerParentCoordsBuffer;
 
             //Constructs a new instance with randomized starting state based on the given seed.
@@ -167,5 +186,7 @@ namespace CALevelGen
             //Invalidates any references to the state grids!
             void Update();
         };
+
+        //TODO: Binary "moore families" file and format
     }
 }

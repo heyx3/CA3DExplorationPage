@@ -1,14 +1,86 @@
 #include "Interface.hpp"
 
-using namespace CALevelGen;
-using namespace CALevelGen::Interface;
-
 #include "utils.hpp"
 #include "Renderer.hpp"
 
+#include <glm/gtx/color_space.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_opengl3.h>
+
+using namespace CALevelGen;
+using namespace CALevelGen::Interface;
+
+
+RenderedGrid3D::RenderedGrid3D(const glm::ivec3& gridSize, const glm::ivec2& renderSize)
+    : TextureRGBA8(renderSize.x, renderSize.y, false),
+      GridState(std::array<size_t, 3>{ size_t(gridSize.x), size_t(gridSize.y), size_t(gridSize.z) })
+{
+    GridState.fill(false);
+    UpdateRender(); //Calls the virtual 'GetColorScheme()', but that's fine -- it's just an initial fill.
+}
+
+void RenderedGrid3D::UpdateRender()
+{
+    thread_local xt::xtensor<glm::u8vec4, 2> _pixels;
+    auto& pixels = _pixels; //Pay thread_local cost only once
+    pixels.resize(std::array{ Width(), Height() }, true);
+
+    TraceGridIsometric(RenderView, RenderSettings, GridState, GetColorScheme(), pixels);
+    Update(pixels);
+}
+
+
+RenderedLayeredMoore::RenderedLayeredMoore(const glm::ivec3& gridSize, const glm::ivec2& renderSize,
+                                           uint64_t seed, uint64_t colorSeed, float startingDensity,
+                                           const LayeredMoore::Generator* generator)
+    : RenderedGrid3D(gridSize, renderSize),
+      state(generator ? *generator : LayeredMoore::Generator{}, gridSize.x, gridSize.y, seed, startingDensity, nullptr)
+{
+    //Pick a color palette for the render.
+    pcg32 colorRng{ colorSeed };
+    hues.resize(1 << (state.GeneratorInfo.NLayers - 1));
+    for (glm::vec3& hue : hues)
+    {
+        hue = glm::rgbColor(glm::vec3(
+            Rng32Float01(colorRng) * 360,
+            glm::mix(0.3f, 0.85f, Rng32Float01(colorRng)),
+            glm::mix(0.5f, 0.9f, Rng32Float01(colorRng))
+        ));
+    }
+
+    //Set up our spacetime versions of each parent state.
+    xt::view(GridState, xt::all(), xt::all(), 0) = state.LayerStates.back();
+    for (int parentI = 0; parentI < state.GeneratorInfo.NLayers - 1; ++parentI)
+    {
+        parentStateSpacetime.emplace_back(
+            std::array<size_t, 3>{
+                state.LayerStates[parentI].shape()[0],
+                state.LayerStates[parentI].shape()[1],
+                size_t(gridSize.z)
+            },
+            false
+        );
+        xt::view(parentStateSpacetime[parentI], xt::all(), xt::all(), 0) = state.LayerStates[parentI];
+    }
+    nextTimeIdx = 1;
+}
+
+RenderedLayeredMoore::ColorScheme_t RenderedLayeredMoore::GetColorScheme() const
+{
+    return [&](const glm::ivec3& cellIdx) -> glm::vec3
+    {
+        auto readParent = [&](int parentI)
+        {
+            int pX = state.LayerParentCoordsBuffer[parentI][0](cellIdx.x),
+                pY = state.LayerParentCoordsBuffer[parentI][1](cellIdx.y);
+            return state.LayerStates[parentI](pX, pY, cellIdx.z);
+        };
+        auto parentStateIdx = state.GeneratorInfo.PackParentStates(parentStateSpacetime.size(), readParent);
+        return hues[parentStateIdx];
+    };
+}
+TODO: UpdateGrid (looping and non-looping) //TODO: 
 
 
 App::App(glm::vec3 _clearColor, bool* successFlag)
@@ -99,6 +171,7 @@ void App::EndFrame()
     SDL_GL_SwapWindow(window);
 }
 
+
 State::State(App& _app, int stateSizeX, int stateSizeY)
     : appContext(_app),
       state(gen, 1, 1, 0x1, 0.1f, nullptr),
@@ -106,7 +179,7 @@ State::State(App& _app, int stateSizeX, int stateSizeY)
 {
     //Set up a random generator.
     pcg32 rng{ seed };
-    for (LayeredWolfram2D::Rule& rule : gen.RuleTree)
+    for (LayeredMoore::Rule& rule : gen.RuleTree)
     {
         for (int wordI = 0; wordI < (rule.Definition.size() / 8) / sizeof(uint32_t); ++wordI)
         {
